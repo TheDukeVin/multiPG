@@ -63,7 +63,7 @@ double Environment::makeAction(){
         for(int i=0; i<numGems; i++){
             reward += pow(numType[i], 2);
         }
-        reward -= (pow(numSlots, 2) + numSlots*numGems - numSlots) / numGems;
+        // reward -= (pow(numSlots, 2) + numSlots*numGems - numSlots) / numGems;
     }
     return reward;
 }
@@ -73,8 +73,16 @@ void Environment::getFeatures(double* features){
         features[i] = 0;
     }
 
+    // Generate equivalent permutation to minimize biases
+    // Eventually we want to not have to do this.
+    int perm[numGems];
+    for(int i=0; i<numGems; i++){
+        perm[i] = i;
+    }
+    // shuffle(perm, perm + numGems, default_random_engine{dev()});
+
     for(int i=0; i<numSlots; i++){
-        features[i*numGems + gems[i]] = 1;
+        features[i*numGems + perm[gems[i]]] = 1;
         features[numSlots*numGems + i] = locked[i];
     }
 }

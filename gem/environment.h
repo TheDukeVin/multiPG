@@ -13,6 +13,8 @@ const int numActions = 2;
 const int actionCount = numSlots;
 const int numFeatures = numSlots*(numGems+1);
 
+const double valueNorm = 0.05;
+
 class Environment{
 public:
     int timeIndex;

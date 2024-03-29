@@ -1,18 +1,16 @@
 
 #include "PGmult.h"
 
-PGMult::PGMult(LSTM::Model structure_, string gameOutFile_){
+PGMult::PGMult(LSTM::PVUnit* structure_, string gameOutFile_){
     gameOutFile = gameOutFile_;
     ofstream gameOut (gameOutFile_);
     gameOut.close();
 
-    structure = structure_;
-    structure.randomize(0.1);
-    structure.resetGradient();
-    netInput = new LSTM::Data(structure.inputSize);
-    netOutput = new LSTM::Data(structure.outputSize);
-    net = LSTM::Model(&structure, NULL, netInput, netOutput);
-    net.copyParams(&structure);
+    structure = new LSTM::PVUnit(structure_, NULL);;
+    structure->randomize(0.1);
+    structure->resetGradient();
+    net = new LSTM::PVUnit(structure, NULL);
+    net->copyParams(structure);
 }
 
 double PGMult::rollout(bool print){
@@ -21,11 +19,11 @@ double PGMult::rollout(bool print){
     for(int t=0; t<timeHorizon; t++){
         PGInstance instance;
         env.validActions();
-        env.getFeatures(netInput->data);
-        net.forwardPass();
+        env.getFeatures(net->envInput->data);
+        net->forwardPass();
         for(int i=0; i<actionCount; i++){
             double policy[numActions];
-            computeSoftmaxPolicy(netOutput->data + i*numActions, numActions, env.validActs[i], policy);
+            computeSoftmaxPolicy(net->policyOutput->data + i*numActions, numActions, env.validActs[i], policy);
             for(int j=0; j<numActions; j++){
                 instance.policy[i][j] = policy[j];
             }
@@ -65,7 +63,8 @@ double PGMult::rollout(bool print){
                     gameOut << trajectory[t].env.actions[i] << ' ';
                 }
             }
-            gameOut << "\nReward: " << trajectory[t].reward << "\n\n";
+            gameOut << "\nValue: " << net->valueOutput->data[0]/valueNorm << '\n';
+            gameOut << "Reward: " << trajectory[t].reward << "\n\n";
         }
         if(env.endState) break;
     }
@@ -85,19 +84,31 @@ double PGMult::rollout(bool print){
 }
 
 void PGMult::accGrad(PGInstance instance){
-    instance.env.getFeatures(netInput->data);
-    net.forwardPass();
-    net.resetGradient();
-    for(int i=0; i<netOutput->size; i++){
-        netOutput->gradient[i] = 0;
+    instance.env.getFeatures(net->envInput->data);
+    net->forwardPass();
+    net->resetGradient();
+    for(int i=0; i<actionCount*numActions; i++){
+        net->policyOutput->gradient[i] = 0;
     }
     for(int i=0; i<actionCount; i++){
         for(auto a : instance.env.validActs[i]){
-            netOutput->gradient[i*numActions + a] = 0.0001 * netOutput->data[a] + (instance.policy[i][a] - (a == instance.env.actions[i])) * instance.value;
+            net->policyOutput->gradient[i*numActions + a] = (instance.policy[i][a] - (a == instance.env.actions[i])) * (instance.value * valueNorm - net->valueOutput->data[0]);
         }
+        double entropy = 0;
+        for(auto a : instance.env.validActs[i]){
+            entropy += instance.policy[i][a] * log(instance.policy[i][a]);
+        }
+        for(auto a : instance.env.validActs[i]){
+            net->policyOutput->gradient[i*numActions + a] += instance.policy[i][a] * (log(instance.policy[i][a]) - entropy) * 0.01;
+        }
+        
+        // for(auto a : instance.env.validActs[i]){
+        //     net->policyOutput->gradient[i*numActions + a] += 0.01 * net->policyOutput->data[a];
+        // }
     }
-    net.backwardPass();
-    structure.accumulateGradient(&net);
+    net->valueOutput->gradient[0] = net->valueOutput->data[0] - instance.value * valueNorm;
+    net->backwardPass();
+    structure->accumulateGradient(net);
 }
 
 void PGMult::train(int batchSize, int numIter){
@@ -119,8 +130,8 @@ void PGMult::train(int batchSize, int numIter){
                 evalSum += value;
             }
         }
-        structure.updateParams(alpha, -1, regRate);
-        net.copyParams(&structure);
+        structure->updateParams(alpha, -1, regRate);
+        net->copyParams(structure);
         if(it % evalPeriod == 0){
             if(it > 0){
                 fout << ',';
